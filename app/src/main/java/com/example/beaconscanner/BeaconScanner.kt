@@ -3,7 +3,6 @@ package com.example.beaconscanner
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
@@ -43,7 +42,16 @@ class BeaconScanner(context: Context) {
     }
 
     private fun handle(result: ScanResult) {
-        val data = result.scanRecord?.getServiceData(EDDYSTONE_UUID) ?: return
+        val record = result.scanRecord ?: return
+        // Prefer the Eddystone service-data field, but fall back to scanning all
+        // service-data entries — some beacons advertise under a slightly different
+        // ParcelUuid form that doesn't match getServiceData() by key equality.
+        val data: ByteArray = record.getServiceData(EDDYSTONE_UUID)
+            ?: record.serviceData?.entries?.firstOrNull {
+                it.key.uuid.mostSignificantBits == EDDYSTONE_UUID.uuid.mostSignificantBits &&
+                    it.key.uuid.leastSignificantBits == EDDYSTONE_UUID.uuid.leastSignificantBits
+            }?.value
+            ?: return
         val beacon = EddystoneUidBeacon.parse(
             data = data,
             address = result.device.address,
@@ -61,14 +69,17 @@ class BeaconScanner(context: Context) {
     fun start(): Boolean {
         val scanner = bleScanner ?: return false
         if (_scanning.value) return true
-        val filters = listOf(
-            ScanFilter.Builder().setServiceUuid(EDDYSTONE_UUID).build()
-        )
+        // No ScanFilter: Android's 16-bit service-UUID HW filter (Eddystone 0xFEAA)
+        // is flaky on many devices — several chipsets drop matches. Scan unfiltered
+        // and filter client-side by service data, mirroring nRF Connect's behavior.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+            .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
             .build()
-        scanner.startScan(filters, settings, callback)
+        scanner.startScan(emptyList(), settings, callback)
+        Log.i(TAG, "BLE scan started (unfiltered, client-side Eddystone match)")
         _scanning.value = true
         return true
     }
