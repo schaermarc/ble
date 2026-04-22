@@ -13,6 +13,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -30,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -38,28 +41,38 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val PREFS_NAME = "beacon_scanner_prefs"
-private const val PREF_UPLOAD_ENDPOINT = "upload_endpoint"
-private const val PREF_UPLOAD_ENABLED = "upload_enabled"
+private val BBraunGreen = Color(0xFF00857C)
+
+private val BBraunColorScheme = lightColorScheme(
+    primary = BBraunGreen,
+    onPrimary = Color.White,
+    secondary = BBraunGreen,
+    onSecondary = Color.White,
+    tertiary = BBraunGreen,
+    onTertiary = Color.White,
+)
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var scanner: BeaconScanner
-    private lateinit var uploader: BeaconUploader
+    private val scanner: BeaconScanner get() = (application as App).scanner
+    private val uploader: BeaconUploader get() = (application as App).uploader
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -69,27 +82,22 @@ class MainActivity : ComponentActivity() {
 
     private val enableBtLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { scanner.start() }
+    ) { startScanService() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        scanner = BeaconScanner(this)
-        uploader = BeaconUploader(
-            scope = lifecycleScope,
-            getBeacons = { scanner.devices.value.values.mapNotNull { it.eddystone } },
-        )
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = BBraunColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BeaconScreen(
                         scanner = scanner,
                         uploader = uploader,
                         prefs = prefs,
                         onStart = ::requestPermissionsAndStart,
-                        onStop = scanner::stop,
+                        onStop = ::stopScanService,
                         onClear = scanner::clear,
                         onOpenLocationSettings = {
                             startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
@@ -100,19 +108,6 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissionsAndStart()
-
-        // Resume auto-upload if it was on before the app was killed.
-        val savedEndpoint = prefs.getString(PREF_UPLOAD_ENDPOINT, "").orEmpty()
-        val savedEnabled = prefs.getBoolean(PREF_UPLOAD_ENABLED, false)
-        if (savedEnabled && savedEndpoint.isNotBlank()) {
-            uploader.start(savedEndpoint)
-        }
-    }
-
-    override fun onDestroy() {
-        uploader.stop()
-        scanner.stop()
-        super.onDestroy()
     }
 
     private fun requestPermissionsAndStart() {
@@ -129,7 +124,18 @@ class MainActivity : ComponentActivity() {
             enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return
         }
-        scanner.start()
+        startScanService()
+    }
+
+    private fun startScanService() {
+        val intent = Intent(this, ScanService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun stopScanService() {
+        // The service stops scanner + uploader in onDestroy.
+        val intent = Intent(this, ScanService::class.java).setAction(ScanService.ACTION_STOP)
+        startService(intent)
     }
 
     private fun requiredPermissions(): List<String> = buildList {
@@ -140,6 +146,9 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
@@ -153,6 +162,23 @@ private fun Context.permissionsGranted(): Boolean {
         }
     }
     return perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+}
+
+@Composable
+private fun AppHeader() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Image(
+            painter = painterResource(id = R.drawable.ic_bbraun_logo),
+            contentDescription = "B. Braun",
+            modifier = Modifier.size(40.dp),
+        )
+        Spacer(Modifier.size(12.dp))
+        Text(
+            "Eddystone-UID Scanner",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+        )
+    }
 }
 
 private fun Context.locationServicesEnabled(): Boolean {
@@ -188,6 +214,9 @@ private fun BeaconScreen(
     var uploadEnabled by remember {
         mutableStateOf(prefs.getBoolean(PREF_UPLOAD_ENABLED, false))
     }
+    var intervalSecText by remember {
+        mutableStateOf(prefs.getInt(PREF_UPLOAD_INTERVAL_SECONDS, DEFAULT_UPLOAD_INTERVAL_SECONDS).toString())
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -217,7 +246,7 @@ private fun BeaconScreen(
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        Text("Eddystone-UID Scanner", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        AppHeader()
         Spacer(Modifier.height(8.dp))
 
         StatusCard(
@@ -262,16 +291,35 @@ private fun BeaconScreen(
                 endpoint = it
                 prefs.edit().putString(PREF_UPLOAD_ENDPOINT, it).apply()
                 if (uploadEnabled) {
+                    val secs = intervalSecText.toIntOrNull()
+                        ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
+                        ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
                     if (it.isBlank()) uploader.stop()
-                    else uploader.start(it)
+                    else uploader.start(it, secs * 1000L)
                 }
             },
             enabled = uploadEnabled,
             onEnabledChange = { on ->
                 uploadEnabled = on
                 prefs.edit().putBoolean(PREF_UPLOAD_ENABLED, on).apply()
-                if (on && endpoint.isNotBlank()) uploader.start(endpoint)
-                else uploader.stop()
+                if (on && endpoint.isNotBlank()) {
+                    val secs = intervalSecText.toIntOrNull()
+                        ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
+                        ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
+                    uploader.start(endpoint, secs * 1000L)
+                } else uploader.stop()
+            },
+            intervalSecText = intervalSecText,
+            onIntervalChange = { raw ->
+                val clean = raw.filter { it.isDigit() }.take(5)
+                intervalSecText = clean
+                val secs = clean.toIntOrNull()
+                if (secs != null && secs >= MIN_UPLOAD_INTERVAL_SECONDS) {
+                    prefs.edit().putInt(PREF_UPLOAD_INTERVAL_SECONDS, secs).apply()
+                    if (uploadEnabled && endpoint.isNotBlank()) {
+                        uploader.start(endpoint, secs * 1000L)
+                    }
+                }
             },
             uploader = uploader,
         )
@@ -411,15 +459,19 @@ private fun UploadCard(
     onEndpointChange: (String) -> Unit,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
+    intervalSecText: String,
+    onIntervalChange: (String) -> Unit,
     uploader: BeaconUploader,
 ) {
     val status by uploader.status.collectAsStateWithLifecycle()
     val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+    val intervalSec = intervalSecText.toIntOrNull()
+    val intervalValid = intervalSec != null && intervalSec >= MIN_UPLOAD_INTERVAL_SECONDS
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                "HTTP-Upload (alle 30 s)",
+                "HTTP-Upload",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -434,10 +486,20 @@ private fun UploadCard(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = intervalSecText,
+                onValueChange = onIntervalChange,
+                label = { Text("Intervall (Sekunden, min. $MIN_UPLOAD_INTERVAL_SECONDS)") },
+                singleLine = true,
+                isError = !intervalValid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(
                     checked = enabled,
-                    enabled = endpointValid,
+                    enabled = endpointValid && intervalValid,
                     onCheckedChange = onEnabledChange,
                 )
                 Text(
