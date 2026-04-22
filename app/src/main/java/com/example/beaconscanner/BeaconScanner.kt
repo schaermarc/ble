@@ -20,6 +20,7 @@ data class ScannedDevice(
     val serviceUuids: List<ParcelUuid>,
     val serviceDataKeys: List<ParcelUuid>,
     val eddystone: EddystoneUidBeacon?,
+    val rawBytes: ByteArray?,
     val lastSeenMillis: Long,
 )
 
@@ -55,9 +56,14 @@ class BeaconScanner(context: Context) {
         val record = result.scanRecord
         val now = System.currentTimeMillis()
 
+        // Three-layer lookup. getServiceData() is the API path; the map lookup
+        // handles cases where the key's ParcelUuid instance doesn't compare equal
+        // by reference; the raw-bytes parser handles OEM stacks that return a
+        // null/empty serviceData map despite valid 0x16 AD blocks in the payload.
         val eddystoneData: ByteArray? = record?.let { rec ->
             rec.getServiceData(EDDYSTONE_UUID)
                 ?: rec.serviceData?.entries?.firstOrNull { it.key.uuid == EDDYSTONE_UUID.uuid }?.value
+                ?: AdvertisementParser.findEddystoneServiceData(rec.bytes)
         }
         val eddystone = eddystoneData?.let {
             EddystoneUidBeacon.parse(it, result.device.address, result.rssi, now)
@@ -72,6 +78,7 @@ class BeaconScanner(context: Context) {
             serviceUuids = record?.serviceUuids.orEmpty(),
             serviceDataKeys = record?.serviceData?.keys?.toList().orEmpty(),
             eddystone = eddystone,
+            rawBytes = record?.bytes,
             lastSeenMillis = now,
         )
         _devices.update { it + (device.address to device) }
@@ -82,11 +89,10 @@ class BeaconScanner(context: Context) {
         val scanner = bleScanner ?: return false
         if (_scanning.value) return true
         _lastError.value = null
+        // Minimal settings: MATCH_MODE / NUM_MATCHES defaults work best across OEMs.
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
-            .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
-            .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
             .build()
         scanner.startScan(emptyList(), settings, callback)
         Log.i(TAG, "BLE scan started (no filter)")

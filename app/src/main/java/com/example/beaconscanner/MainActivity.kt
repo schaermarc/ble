@@ -108,25 +108,31 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requiredPermissions(): List<String> = buildList {
+        // Request FINE_LOCATION on every Android version. The manifest no longer
+        // sets neverForLocation on BLUETOOTH_SCAN, so on 12+ we also need location
+        // permission for the OS to hand us all scan results reliably.
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             add(Manifest.permission.BLUETOOTH_SCAN)
             add(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
 }
 
 private fun Context.permissionsGranted(): Boolean {
-    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-        listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-    else listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    val perms = buildList {
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            add(Manifest.permission.BLUETOOTH_SCAN)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+    }
     return perms.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
 }
 
 private fun Context.locationServicesEnabled(): Boolean {
-    // Required on Android < 12 even with permission granted. Not needed on 12+ with neverForLocation.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return true
+    // Required whenever FINE_LOCATION backs the scan (i.e. no neverForLocation
+    // flag on BLUETOOTH_SCAN) — which is true on every Android version here.
     val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return false
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) lm.isLocationEnabled
     else lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
@@ -323,6 +329,16 @@ private fun DeviceCard(device: ScannedDevice) {
                 Text("Eddystone UID:", style = MaterialTheme.typography.labelMedium)
                 Text("NS ${ed.namespace}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
                 Text("ID ${ed.instanceId}", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+            }
+            val raw = device.rawBytes
+            if (raw != null && raw.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("Raw adv:", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    AdvertisementParser.toHex(raw, max = 62),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }
