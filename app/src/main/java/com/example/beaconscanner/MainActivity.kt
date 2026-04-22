@@ -47,10 +47,19 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private const val PREFS_NAME = "beacon_scanner_prefs"
+private const val PREF_UPLOAD_ENDPOINT = "upload_endpoint"
+private const val PREF_UPLOAD_ENABLED = "upload_enabled"
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var scanner: BeaconScanner
+    private lateinit var uploader: BeaconUploader
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -65,12 +74,20 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         scanner = BeaconScanner(this)
+        uploader = BeaconUploader(
+            scope = lifecycleScope,
+            getBeacons = { scanner.devices.value.values.mapNotNull { it.eddystone } },
+        )
+
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     BeaconScreen(
                         scanner = scanner,
+                        uploader = uploader,
+                        prefs = prefs,
                         onStart = ::requestPermissionsAndStart,
                         onStop = scanner::stop,
                         onClear = scanner::clear,
@@ -83,9 +100,17 @@ class MainActivity : ComponentActivity() {
         }
 
         requestPermissionsAndStart()
+
+        // Resume auto-upload if it was on before the app was killed.
+        val savedEndpoint = prefs.getString(PREF_UPLOAD_ENDPOINT, "").orEmpty()
+        val savedEnabled = prefs.getBoolean(PREF_UPLOAD_ENABLED, false)
+        if (savedEnabled && savedEndpoint.isNotBlank()) {
+            uploader.start(savedEndpoint)
+        }
     }
 
     override fun onDestroy() {
+        uploader.stop()
         scanner.stop()
         super.onDestroy()
     }
@@ -142,6 +167,8 @@ private fun Context.locationServicesEnabled(): Boolean {
 @Composable
 private fun BeaconScreen(
     scanner: BeaconScanner,
+    uploader: BeaconUploader,
+    prefs: android.content.SharedPreferences,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
@@ -154,6 +181,13 @@ private fun BeaconScreen(
     var showAll by remember { mutableStateOf(false) }
     var permsOk by remember { mutableStateOf(context.permissionsGranted()) }
     var locationOk by remember { mutableStateOf(context.locationServicesEnabled()) }
+
+    var endpoint by remember {
+        mutableStateOf(prefs.getString(PREF_UPLOAD_ENDPOINT, "").orEmpty())
+    }
+    var uploadEnabled by remember {
+        mutableStateOf(prefs.getBoolean(PREF_UPLOAD_ENABLED, false))
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -218,9 +252,29 @@ private fun BeaconScreen(
         Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = showAll, onCheckedChange = { showAll = it })
-            Spacer(Modifier.height(0.dp))
             Text("  Alle BLE-Geräte anzeigen (Debug)", style = MaterialTheme.typography.bodyMedium)
         }
+        Spacer(Modifier.height(8.dp))
+
+        UploadCard(
+            endpoint = endpoint,
+            onEndpointChange = {
+                endpoint = it
+                prefs.edit().putString(PREF_UPLOAD_ENDPOINT, it).apply()
+                if (uploadEnabled) {
+                    if (it.isBlank()) uploader.stop()
+                    else uploader.start(it)
+                }
+            },
+            enabled = uploadEnabled,
+            onEnabledChange = { on ->
+                uploadEnabled = on
+                prefs.edit().putBoolean(PREF_UPLOAD_ENABLED, on).apply()
+                if (on && endpoint.isNotBlank()) uploader.start(endpoint)
+                else uploader.stop()
+            },
+            uploader = uploader,
+        )
         Spacer(Modifier.height(8.dp))
 
         if (showAll) {
@@ -276,8 +330,8 @@ private fun StatusCard(
             if (!locationOk) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Auf Android 11 und älter muss der Standortdienst im System AN sein, " +
-                        "sonst liefert Android keine Scan-Ergebnisse.",
+                    "Standortdienst muss im System AN sein, sonst liefert Android " +
+                        "die BLE-Scan-Ergebnisse nicht vollständig aus.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(4.dp))
@@ -349,4 +403,60 @@ private fun shortUuid(u: String): String {
     return if (u.length == 36 && u.endsWith("-0000-1000-8000-00805f9b34fb") && u.startsWith("0000"))
         "0x" + u.substring(4, 8).uppercase()
     else u
+}
+
+@Composable
+private fun UploadCard(
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    uploader: BeaconUploader,
+) {
+    val status by uploader.status.collectAsStateWithLifecycle()
+    val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "HTTP-Upload (alle 30 s)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = endpoint,
+                onValueChange = onEndpointChange,
+                label = { Text("Endpoint-URL (POST JSON)") },
+                placeholder = { Text("https://example.com/beacons") },
+                singleLine = true,
+                isError = endpoint.isNotBlank() && !endpointValid,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = enabled,
+                    enabled = endpointValid,
+                    onCheckedChange = onEnabledChange,
+                )
+                Text(
+                    "  " + if (status.running) "Upload AN (läuft)" else "Upload AUS",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            val ts = status.lastAttemptMillis
+            if (ts != null) {
+                Spacer(Modifier.height(4.dp))
+                val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
+                val tag = if (status.lastSuccess == true) "OK" else "FEHLER"
+                Text(
+                    "Letzter Versuch $time: $tag" +
+                        (status.lastMessage?.let { " — $it" } ?: "") +
+                        (status.lastBeaconCount?.let { " (${it} Beacons)" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
 }
