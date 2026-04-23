@@ -11,14 +11,16 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Drives a duty-cycled BLE scan: every `periodSec` seconds, scans for
- * `windowSec` seconds, stops scanning (to save power), then POSTs the
- * beacons captured in that window to the configured upload target
- * (if any) and sleeps until the next period boundary.
+ * Drives BLE scan bursts. Two modes:
  *
- * Re-reads its parameters each cycle via [paramsProvider], so changes
- * to period / window / upload target / enabled flag take effect at the
- * next cycle without requiring a restart.
+ * - [startPeriodic]: every `periodMs`, scan for `windowMs`, upload, idle.
+ * - [runOnce]: a single scan burst of `windowMs`, upload, then done.
+ *
+ * Parameters are re-read via [paramsProvider] at the start of each cycle
+ * so live edits take effect without a restart. Beacons captured within
+ * a window accumulate (the scanner deduplicates by MAC and keeps entries
+ * for the whole window); the list is cleared only at the start of each
+ * new scan burst.
  */
 class ScanScheduler(
     private val scope: CoroutineScope,
@@ -38,36 +40,54 @@ class ScanScheduler(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
-    fun start() {
+    fun startPeriodic() {
+        launchLoop(periodic = true)
+    }
+
+    fun runOnce() {
+        launchLoop(periodic = false)
+    }
+
+    private fun launchLoop(periodic: Boolean) {
         stop()
         _running.value = true
         uploader.setRunning(paramsProvider().uploadEnabled)
         job = scope.launch(Dispatchers.Default) {
             try {
-                while (isActive) {
-                    val p = paramsProvider()
-                    val window = p.windowMs.coerceAtMost(p.periodMs).coerceAtLeast(500L)
-                    val cycleStart = System.currentTimeMillis()
-
-                    // Fresh beacon set per window — upload reflects only what was
-                    // heard during this scan burst.
-                    scanner.clear()
-                    scanner.start()
-                    delay(window)
-                    scanner.stop()
-
-                    uploader.setRunning(p.uploadEnabled)
-                    if (p.uploadEnabled && p.target != null) {
-                        runCatching { uploader.uploadOnce(p.target) }
-                    }
-
-                    val elapsed = System.currentTimeMillis() - cycleStart
-                    val sleep = p.periodMs - elapsed
-                    if (sleep > 0) delay(sleep)
+                if (periodic) {
+                    while (isActive) runCycle(sleepAfterUpload = true)
+                } else {
+                    runCycle(sleepAfterUpload = false)
                 }
             } finally {
                 scanner.stop()
+                uploader.setRunning(false)
+                _running.value = false
             }
+        }
+    }
+
+    private suspend fun runCycle(sleepAfterUpload: Boolean) {
+        val p = paramsProvider()
+        val window = p.windowMs.coerceAtMost(p.periodMs).coerceAtLeast(500L)
+        val cycleStart = System.currentTimeMillis()
+
+        // Fresh beacon set per window — the upload at the end of the
+        // window reflects only beacons heard during this burst.
+        scanner.clear()
+        scanner.start()
+        delay(window)
+        scanner.stop()
+
+        uploader.setRunning(p.uploadEnabled)
+        if (p.uploadEnabled && p.target != null) {
+            runCatching { uploader.uploadOnce(p.target) }
+        }
+
+        if (sleepAfterUpload) {
+            val elapsed = System.currentTimeMillis() - cycleStart
+            val sleep = p.periodMs - elapsed
+            if (sleep > 0) delay(sleep)
         }
     }
 

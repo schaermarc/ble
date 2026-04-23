@@ -81,10 +81,14 @@ class MainActivity : ComponentActivity() {
     private val uploader: BeaconUploader get() = (application as App).uploader
     private val locationTracker: LocationTracker get() = (application as App).locationTracker
 
+    private var pendingAutoStart = false
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        if (result.values.all { it }) ensureBluetoothAndStart()
+        if (result.values.all { it }) {
+            if (pendingAutoStart) autoStartIfPeriodic() else ensureBluetoothAndStart()
+        }
     }
 
     private val enableBtLauncher = registerForActivityResult(
@@ -115,10 +119,29 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        requestPermissionsAndStart()
+        requestPermissionsAndAutoStart()
     }
 
+    private fun requestPermissionsAndAutoStart() {
+        pendingAutoStart = true
+        val missing = requiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) autoStartIfPeriodic()
+        else permissionLauncher.launch(missing.toTypedArray())
+    }
+
+    private fun autoStartIfPeriodic() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_SCAN_PERIODIC, DEFAULT_SCAN_PERIODIC)) {
+            ensureBluetoothAndStart()
+        }
+    }
+
+    /** Triggered by the Scan button — always kicks off the service regardless
+     * of the periodic flag; the service picks the right scheduler mode. */
     private fun requestPermissionsAndStart() {
+        pendingAutoStart = false
         val missing = requiredPermissions().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -223,6 +246,9 @@ private fun BeaconScreen(
     var uploadEnabled by remember {
         mutableStateOf(prefs.getBoolean(PREF_UPLOAD_ENABLED, false))
     }
+    var scanPeriodic by remember {
+        mutableStateOf(prefs.getBoolean(PREF_SCAN_PERIODIC, DEFAULT_SCAN_PERIODIC))
+    }
     var periodSecText by remember {
         mutableStateOf(prefs.getInt(PREF_SCAN_PERIOD_SECONDS, DEFAULT_SCAN_PERIOD_SECONDS).toString())
     }
@@ -308,6 +334,11 @@ private fun BeaconScreen(
         Spacer(Modifier.height(8.dp))
 
         ScanScheduleCard(
+            periodic = scanPeriodic,
+            onPeriodicChange = { on ->
+                scanPeriodic = on
+                prefs.edit().putBoolean(PREF_SCAN_PERIODIC, on).apply()
+            },
             periodSecText = periodSecText,
             onPeriodChange = { raw ->
                 val clean = raw.filter { it.isDigit() }.take(5)
@@ -651,6 +682,8 @@ private fun UploadCard(
 
 @Composable
 private fun ScanScheduleCard(
+    periodic: Boolean,
+    onPeriodicChange: (Boolean) -> Unit,
     periodSecText: String,
     onPeriodChange: (String) -> Unit,
     windowSecText: String,
@@ -671,13 +704,22 @@ private fun ScanScheduleCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = periodic, onCheckedChange = onPeriodicChange)
+                Text(
+                    "  Periodischer Scan",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = periodSecText,
                     onValueChange = onPeriodChange,
                     label = { Text("Intervall (s)") },
                     singleLine = true,
-                    isError = !periodValid,
+                    enabled = periodic,
+                    isError = periodic && !periodValid,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                 )
@@ -693,9 +735,15 @@ private fun ScanScheduleCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "Alle ${periodSec ?: "?"}s für ${windowSec ?: "?"}s scannen, " +
-                    "dann Upload mit den in diesem Fenster erfassten Beacons. " +
-                    "Dazwischen ist das Scannen aus.",
+                if (periodic) {
+                    "Alle ${periodSec ?: "?"}s für ${windowSec ?: "?"}s scannen, " +
+                        "danach Upload mit den in diesem Fenster erfassten Beacons. " +
+                        "Dazwischen ist das Scannen aus."
+                } else {
+                    "Kein automatischer Scan. Der Scan-Button startet einen einmaligen " +
+                        "Scan über ${windowSec ?: "?"}s; am Ende werden alle in dieser " +
+                        "Zeit gesehenen Beacons gesendet."
+                },
                 style = MaterialTheme.typography.bodySmall,
             )
         }

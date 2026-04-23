@@ -46,7 +46,10 @@ class ScanService : Service() {
         }
 
         app.locationTracker.start()
-        app.scheduler.start()
+
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val periodic = prefs.getBoolean(PREF_SCAN_PERIODIC, DEFAULT_SCAN_PERIODIC)
+        if (periodic) app.scheduler.startPeriodic() else app.scheduler.runOnce()
 
         return START_STICKY
     }

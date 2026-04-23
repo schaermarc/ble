@@ -4,6 +4,7 @@ const val PREFS_NAME = "beacon_scanner_prefs"
 
 const val PREF_UPLOAD_MODE = "upload_mode"
 const val PREF_UPLOAD_ENABLED = "upload_enabled"
+const val PREF_SCAN_PERIODIC = "scan_periodic"
 const val PREF_SCAN_PERIOD_SECONDS = "scan_period_seconds"
 const val PREF_SCAN_WINDOW_SECONDS = "scan_window_seconds"
 
@@ -19,6 +20,7 @@ const val PREF_EH_HUB = "eh_hub"
 const val MODE_HTTP = "http"
 const val MODE_EVENT_HUB = "eventhub"
 
+const val DEFAULT_SCAN_PERIODIC = true
 const val DEFAULT_SCAN_PERIOD_SECONDS = 30
 const val DEFAULT_SCAN_WINDOW_SECONDS = 10
 const val MIN_SCAN_PERIOD_SECONDS = 5
