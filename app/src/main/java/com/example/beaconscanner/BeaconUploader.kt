@@ -1,15 +1,11 @@
 package com.example.beaconscanner
 
 import android.location.Location
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -31,33 +27,17 @@ data class UploadStatus(
 )
 
 class BeaconUploader(
-    private val scope: CoroutineScope,
     private val getBeacons: () -> List<EddystoneUidBeacon>,
     private val getLocation: () -> Location? = { null },
 ) {
     private val _status = MutableStateFlow(UploadStatus())
     val status: StateFlow<UploadStatus> = _status.asStateFlow()
 
-    private var job: Job? = null
-
-    fun start(target: UploadTarget, intervalMillis: Long = 30_000L) {
-        stop()
-        _status.value = _status.value.copy(running = true)
-        job = scope.launch(Dispatchers.IO) {
-            while (isActive) {
-                uploadOnce(target)
-                delay(intervalMillis)
-            }
-        }
+    fun setRunning(running: Boolean) {
+        _status.value = _status.value.copy(running = running)
     }
 
-    fun stop() {
-        job?.cancel()
-        job = null
-        _status.value = _status.value.copy(running = false)
-    }
-
-    private fun uploadOnce(target: UploadTarget) {
+    suspend fun uploadOnce(target: UploadTarget) = withContext(Dispatchers.IO) {
         val beacons = getBeacons()
         val body = buildJson(beacons)
         val now = System.currentTimeMillis()
@@ -66,16 +46,14 @@ class BeaconUploader(
                 is UploadTarget.Http -> postHttp(target.url, body)
                 is UploadTarget.AzureEventHub -> postEventHub(target, body)
             }
-            UploadStatus(
-                running = true,
+            _status.value.copy(
                 lastAttemptMillis = now,
                 lastSuccess = code in 200..299,
                 lastMessage = "HTTP $code",
                 lastBeaconCount = beacons.size,
             )
         } catch (e: Exception) {
-            UploadStatus(
-                running = true,
+            _status.value.copy(
                 lastAttemptMillis = now,
                 lastSuccess = false,
                 lastMessage = e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""),
@@ -94,7 +72,6 @@ class BeaconUploader(
 
         val beaconArr = JSONArray()
         for (b in beacons) {
-            // beaconId = last 2 bytes (= last 4 hex chars) of the 6-byte instance id.
             val beaconId = b.instanceId.takeLast(4)
             beaconArr.put(
                 JSONObject()
@@ -262,12 +239,6 @@ class BeaconUploader(
         }
     }
 
-    /**
-     * Azure Service Bus / Event Hubs Shared Access Signature:
-     * SharedAccessSignature sr=<encoded resource uri>&sig=<encoded sig>&se=<expiry epoch secs>&skn=<key name>
-     *
-     * Signature = HMAC-SHA256(key, URLEncode(resourceUri) + "\n" + expiry)   (base64)
-     */
     private fun sasToken(resourceUri: String, keyName: String, key: String, expiryEpochSec: Long): String {
         val encodedUri = URLEncoder.encode(resourceUri, "UTF-8")
         val stringToSign = "$encodedUri\n$expiryEpochSec"

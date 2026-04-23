@@ -24,8 +24,7 @@ class ScanService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                app.scanner.stop()
-                app.uploader.stop()
+                app.scheduler.stop()
                 app.locationTracker.stop()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -46,23 +45,14 @@ class ScanService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        app.scanner.start()
         app.locationTracker.start()
-
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val uploadEnabled = prefs.getBoolean(PREF_UPLOAD_ENABLED, false)
-        val intervalSec = prefs.getInt(PREF_UPLOAD_INTERVAL_SECONDS, DEFAULT_UPLOAD_INTERVAL_SECONDS)
-        val target = prefs.readUploadTarget()
-        if (uploadEnabled && target != null) {
-            app.uploader.start(target, intervalSec.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS) * 1000L)
-        }
+        app.scheduler.start()
 
         return START_STICKY
     }
 
     override fun onDestroy() {
-        app.scanner.stop()
-        app.uploader.stop()
+        app.scheduler.stop()
         app.locationTracker.stop()
         super.onDestroy()
     }

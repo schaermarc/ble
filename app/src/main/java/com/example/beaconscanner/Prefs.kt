@@ -4,7 +4,8 @@ const val PREFS_NAME = "beacon_scanner_prefs"
 
 const val PREF_UPLOAD_MODE = "upload_mode"
 const val PREF_UPLOAD_ENABLED = "upload_enabled"
-const val PREF_UPLOAD_INTERVAL_SECONDS = "upload_interval_seconds"
+const val PREF_SCAN_PERIOD_SECONDS = "scan_period_seconds"
+const val PREF_SCAN_WINDOW_SECONDS = "scan_window_seconds"
 
 // HTTP mode
 const val PREF_UPLOAD_ENDPOINT = "upload_endpoint"
@@ -18,8 +19,10 @@ const val PREF_EH_HUB = "eh_hub"
 const val MODE_HTTP = "http"
 const val MODE_EVENT_HUB = "eventhub"
 
-const val DEFAULT_UPLOAD_INTERVAL_SECONDS = 30
-const val MIN_UPLOAD_INTERVAL_SECONDS = 5
+const val DEFAULT_SCAN_PERIOD_SECONDS = 30
+const val DEFAULT_SCAN_WINDOW_SECONDS = 10
+const val MIN_SCAN_PERIOD_SECONDS = 5
+const val MIN_SCAN_WINDOW_SECONDS = 1
 
 // First-launch defaults the user provided.
 const val DEFAULT_HTTP_ENDPOINT = "https://bleuid.free.beeceptor.com"

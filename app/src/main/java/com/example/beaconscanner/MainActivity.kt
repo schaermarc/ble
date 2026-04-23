@@ -223,8 +223,11 @@ private fun BeaconScreen(
     var uploadEnabled by remember {
         mutableStateOf(prefs.getBoolean(PREF_UPLOAD_ENABLED, false))
     }
-    var intervalSecText by remember {
-        mutableStateOf(prefs.getInt(PREF_UPLOAD_INTERVAL_SECONDS, DEFAULT_UPLOAD_INTERVAL_SECONDS).toString())
+    var periodSecText by remember {
+        mutableStateOf(prefs.getInt(PREF_SCAN_PERIOD_SECONDS, DEFAULT_SCAN_PERIOD_SECONDS).toString())
+    }
+    var windowSecText by remember {
+        mutableStateOf(prefs.getInt(PREF_SCAN_WINDOW_SECONDS, DEFAULT_SCAN_WINDOW_SECONDS).toString())
     }
     var uploadMode by remember {
         mutableStateOf(prefs.getString(PREF_UPLOAD_MODE, MODE_HTTP) ?: MODE_HTTP)
@@ -233,28 +236,6 @@ private fun BeaconScreen(
     var ehKeyName by remember { mutableStateOf(prefs.getString(PREF_EH_KEY_NAME, DEFAULT_EH_KEY_NAME).orEmpty()) }
     var ehKey by remember { mutableStateOf(prefs.getString(PREF_EH_KEY, DEFAULT_EH_KEY).orEmpty()) }
     var ehHub by remember { mutableStateOf(prefs.getString(PREF_EH_HUB, DEFAULT_EH_HUB).orEmpty()) }
-
-    fun currentTarget(): UploadTarget? = when (uploadMode) {
-        MODE_EVENT_HUB -> if (
-            ehHost.isNotBlank() && ehKeyName.isNotBlank() &&
-            ehKey.isNotBlank() && ehHub.isNotBlank()
-        ) UploadTarget.AzureEventHub(
-            host = ehHost.trim(), keyName = ehKeyName.trim(),
-            key = ehKey, hubName = ehHub.trim(),
-        ) else null
-        else -> if (
-            endpoint.startsWith("http://") || endpoint.startsWith("https://")
-        ) UploadTarget.Http(endpoint.trim()) else null
-    }
-
-    fun restartIfEnabled() {
-        if (!uploadEnabled) return
-        val target = currentTarget() ?: run { uploader.stop(); return }
-        val secs = intervalSecText.toIntOrNull()
-            ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
-            ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
-        uploader.start(target, secs * 1000L)
-    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -326,67 +307,64 @@ private fun BeaconScreen(
         }
         Spacer(Modifier.height(8.dp))
 
+        ScanScheduleCard(
+            periodSecText = periodSecText,
+            onPeriodChange = { raw ->
+                val clean = raw.filter { it.isDigit() }.take(5)
+                periodSecText = clean
+                val secs = clean.toIntOrNull()
+                if (secs != null && secs >= MIN_SCAN_PERIOD_SECONDS) {
+                    prefs.edit().putInt(PREF_SCAN_PERIOD_SECONDS, secs).apply()
+                }
+            },
+            windowSecText = windowSecText,
+            onWindowChange = { raw ->
+                val clean = raw.filter { it.isDigit() }.take(5)
+                windowSecText = clean
+                val secs = clean.toIntOrNull()
+                if (secs != null && secs >= MIN_SCAN_WINDOW_SECONDS) {
+                    prefs.edit().putInt(PREF_SCAN_WINDOW_SECONDS, secs).apply()
+                }
+            },
+        )
+        Spacer(Modifier.height(8.dp))
+
         UploadCard(
             mode = uploadMode,
             onModeChange = { m ->
                 uploadMode = m
                 prefs.edit().putString(PREF_UPLOAD_MODE, m).apply()
-                restartIfEnabled()
             },
             endpoint = endpoint,
             onEndpointChange = {
                 endpoint = it
                 prefs.edit().putString(PREF_UPLOAD_ENDPOINT, it).apply()
-                restartIfEnabled()
             },
             ehHost = ehHost,
             onEhHostChange = {
                 ehHost = it
                 prefs.edit().putString(PREF_EH_HOST, it).apply()
-                restartIfEnabled()
             },
             ehKeyName = ehKeyName,
             onEhKeyNameChange = {
                 ehKeyName = it
                 prefs.edit().putString(PREF_EH_KEY_NAME, it).apply()
-                restartIfEnabled()
             },
             ehKey = ehKey,
             onEhKeyChange = {
                 ehKey = it
                 prefs.edit().putString(PREF_EH_KEY, it).apply()
-                restartIfEnabled()
             },
             ehHub = ehHub,
             onEhHubChange = {
                 ehHub = it
                 prefs.edit().putString(PREF_EH_HUB, it).apply()
-                restartIfEnabled()
             },
             enabled = uploadEnabled,
             onEnabledChange = { on ->
                 uploadEnabled = on
                 prefs.edit().putBoolean(PREF_UPLOAD_ENABLED, on).apply()
-                if (on) {
-                    val target = currentTarget()
-                    val secs = intervalSecText.toIntOrNull()
-                        ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
-                        ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
-                    if (target != null) uploader.start(target, secs * 1000L)
-                    else uploader.stop()
-                } else uploader.stop()
             },
-            intervalSecText = intervalSecText,
-            onIntervalChange = { raw ->
-                val clean = raw.filter { it.isDigit() }.take(5)
-                intervalSecText = clean
-                val secs = clean.toIntOrNull()
-                if (secs != null && secs >= MIN_UPLOAD_INTERVAL_SECONDS) {
-                    prefs.edit().putInt(PREF_UPLOAD_INTERVAL_SECONDS, secs).apply()
-                    restartIfEnabled()
-                }
-            },
-            targetReady = currentTarget() != null,
             uploader = uploader,
         )
         Spacer(Modifier.height(8.dp))
@@ -542,22 +520,19 @@ private fun UploadCard(
     onEhHubChange: (String) -> Unit,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
-    intervalSecText: String,
-    onIntervalChange: (String) -> Unit,
-    targetReady: Boolean,
     uploader: BeaconUploader,
 ) {
     val status by uploader.status.collectAsStateWithLifecycle()
-    val intervalSec = intervalSecText.toIntOrNull()
-    val intervalValid = intervalSec != null && intervalSec >= MIN_UPLOAD_INTERVAL_SECONDS
+    val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+    val targetReady = when (mode) {
+        MODE_EVENT_HUB -> ehHost.isNotBlank() && ehKeyName.isNotBlank() &&
+            ehKey.isNotBlank() && ehHub.isNotBlank()
+        else -> endpointValid
+    }
 
     var expanded by rememberSaveable { mutableStateOf(false) }
     val modeLabel = if (mode == MODE_EVENT_HUB) "Azure Event Hub" else "HTTP"
-    val summary = buildString {
-        append("Upload ($modeLabel): ")
-        append(if (status.running) "AN" else "AUS")
-        if (intervalValid) append(" • ${intervalSec}s")
-    }
+    val summary = "Upload ($modeLabel): " + if (status.running) "AN" else "AUS"
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -634,7 +609,6 @@ private fun UploadCard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
                     OutlinedTextField(
                         value = endpoint,
                         onValueChange = onEndpointChange,
@@ -647,20 +621,10 @@ private fun UploadCard(
                 }
 
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = intervalSecText,
-                    onValueChange = onIntervalChange,
-                    label = { Text("Intervall (Sekunden, min. $MIN_UPLOAD_INTERVAL_SECONDS)") },
-                    singleLine = true,
-                    isError = !intervalValid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(
                         checked = enabled,
-                        enabled = targetReady && intervalValid,
+                        enabled = targetReady,
                         onCheckedChange = onEnabledChange,
                     )
                     Text(
@@ -681,6 +645,59 @@ private fun UploadCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ScanScheduleCard(
+    periodSecText: String,
+    onPeriodChange: (String) -> Unit,
+    windowSecText: String,
+    onWindowChange: (String) -> Unit,
+) {
+    val periodSec = periodSecText.toIntOrNull()
+    val windowSec = windowSecText.toIntOrNull()
+    val periodValid = periodSec != null && periodSec >= MIN_SCAN_PERIOD_SECONDS
+    val windowValid = windowSec != null &&
+        windowSec >= MIN_SCAN_WINDOW_SECONDS &&
+        (periodSec == null || windowSec <= periodSec)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "Scan-Zeitplan",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = periodSecText,
+                    onValueChange = onPeriodChange,
+                    label = { Text("Intervall (s)") },
+                    singleLine = true,
+                    isError = !periodValid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = windowSecText,
+                    onValueChange = onWindowChange,
+                    label = { Text("Scan-Dauer (s)") },
+                    singleLine = true,
+                    isError = !windowValid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Alle ${periodSec ?: "?"}s für ${windowSec ?: "?"}s scannen, " +
+                    "dann Upload mit den in diesem Fenster erfassten Beacons. " +
+                    "Dazwischen ist das Scannen aus.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
