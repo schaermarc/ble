@@ -88,6 +88,10 @@ class BeaconUploader(
     private fun buildJson(beacons: List<EddystoneUidBeacon>): String {
         val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
 
+        val loc = getLocation()
+        val lrrLat = if (loc != null) String.format(Locale.US, "%.6f", loc.latitude) else "0.000000"
+        val lrrLon = if (loc != null) String.format(Locale.US, "%.6f", loc.longitude) else "0.000000"
+
         val beaconArr = JSONArray()
         for (b in beacons) {
             // beaconId = last 2 bytes (= last 4 hex chars) of the 6-byte instance id.
@@ -184,8 +188,8 @@ class BeaconUploader(
             .put("Channel", "LC2")
             .put("Lrrid", "100117ED")
             .put("Late", "0")
-            .put("LrrLAT", "46.749813")
-            .put("LrrLON", "7.624893")
+            .put("LrrLAT", lrrLat)
+            .put("LrrLON", lrrLon)
             .put("Lrrs", lrrs)
             .put("DevLrrCnt", "1")
             .put("CustomerID", "100055680")
