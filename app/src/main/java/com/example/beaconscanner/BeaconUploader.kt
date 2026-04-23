@@ -128,12 +128,86 @@ class BeaconUploader(
             .put("batteryLevel", JSONObject().put("unitId", "%").put("record", 92))
             .put("temperature", JSONObject().put("unitId", "Cel").put("record", 25.3))
 
+        val lrrs = JSONObject().put(
+            "Lrr",
+            JSONArray().put(
+                JSONObject()
+                    .put("Lrrid", "100117ED")
+                    .put("Chain", "0")
+                    .put("LrrRSSI", "-59.000000")
+                    .put("LrrSNR", "10.500000")
+                    .put("LrrESP", "-59.370777")
+            )
+        )
+
+        val customerData = JSONObject()
+            .put("loc", JSONObject.NULL)
+            .put("alr", JSONObject().put("pro", "ABEE/APY").put("ver", "1"))
+            .put("tags", JSONArray().put("Hohmad"))
+            .put("doms", JSONArray())
+            .put("name", "AbeewayCompact_0272")
+            .put("lrrID", JSONObject.NULL)
+            .put("rfProbe", JSONObject.NULL)
+
+        val baseStationData = JSONObject()
+            .put("doms", JSONArray())
+            .put("name", "000800-21621688")
+
+        val driverCfg = JSONObject()
+            .put(
+                "mod",
+                JSONObject().put("pId", "abeeway").put("mId", "compact-tracker").put("ver", "1")
+            )
+            .put(
+                "app",
+                JSONObject().put("pId", "abeeway").put("mId", "asset-tracker").put("ver", "2")
+            )
+            .put("id", "abeeway:asset-tracker:3")
+
         val uplink = JSONObject()
             .put("Time", time)
             .put("DevEUI", "20635F05B100045D")
+            .put("FPort", "18")
+            .put("FCntUp", "84398")
+            .put("LostUplinksAS", "0")
+            .put("ADRbit", "1")
+            .put("MType", "2")
+            .put("FCntDn", "1355")
             .put("payload_hex", "0b485c891000e680a903ba4a")
+            .put("mic_hex", "56acbde2")
+            .put("Lrcid", "00000401")
+            .put("LrrRSSI", "-59.000000")
+            .put("LrrSNR", "10.500000")
+            .put("LrrESP", "-59.370777")
+            .put("SpFact", "7")
+            .put("SubBand", "G1")
+            .put("Channel", "LC2")
+            .put("Lrrid", "100117ED")
+            .put("Late", "0")
+            .put("LrrLAT", "46.749813")
+            .put("LrrLON", "7.624893")
+            .put("Lrrs", lrrs)
+            .put("DevLrrCnt", "1")
+            .put("CustomerID", "100055680")
+            .put("CustomerData", customerData)
+            .put("BaseStationData", baseStationData)
+            .put("ModelCfg", "1:AbeewayCompact")
+            .put("DriverCfg", driverCfg)
+            .put("InstantPER", "0.000000")
+            .put("MeanPER", "0.000000")
+            .put("DevAddr", "08A2749B")
+            .put("TxPower", "2.000000")
+            .put("NbTrans", "1")
+            .put("Frequency", "868.3")
+            .put("DynamicClass", "A")
+            .put("PayloadEncryption", 0)
             .put("payload", payload)
             .put("points", points)
+            .put(
+                "downlinkUrl",
+                "https://portal.lpn.swisscom.ch/iot-flow/downlinkMessages/" +
+                    "c5d165ef-a47f-42bd-b07e-2c2ed03444e0"
+            )
 
         return JSONObject().put("DevEUI_uplink", uplink).toString()
     }
