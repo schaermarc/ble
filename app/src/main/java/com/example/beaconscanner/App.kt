@@ -30,6 +30,7 @@ class App : Application() {
             scope = bgScope,
             scanner = scanner,
             uploader = uploader,
+            locationTracker = locationTracker,
             paramsProvider = { readSchedulerParams() },
         )
     }

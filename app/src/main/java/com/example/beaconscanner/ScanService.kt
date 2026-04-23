@@ -9,15 +9,20 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 /**
- * Keeps the scanner and periodic uploader alive while the app is in the background
- * by running as a foreground service with an ongoing notification.
+ * Keeps the scan scheduler alive while the app is in the background by running
+ * as a foreground service with an ongoing notification and a partial wake lock
+ * so the CPU doesn't sleep between scan windows (which would otherwise stall
+ * the scheduler's delay() in Doze / screen-off).
  */
 class ScanService : Service() {
 
     private val app: App get() = application as App
+
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -25,7 +30,7 @@ class ScanService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 app.scheduler.stop()
-                app.locationTracker.stop()
+                releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -45,7 +50,7 @@ class ScanService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        app.locationTracker.start()
+        acquireWakeLock()
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val periodic = prefs.getBoolean(PREF_SCAN_PERIODIC, DEFAULT_SCAN_PERIODIC)
@@ -54,8 +59,8 @@ class ScanService : Service() {
         } else {
             app.scheduler.runOnce(onComplete = {
                 // Single-shot is done — drop the foreground notification and
-                // let the system tear us down. Location tracker is stopped in
-                // onDestroy.
+                // release resources so the phone goes back to idle.
+                releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             })
@@ -66,8 +71,22 @@ class ScanService : Service() {
 
     override fun onDestroy() {
         app.scheduler.stop()
-        app.locationTracker.stop()
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKELOCK_TAG).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
     }
 
     private fun ensureChannel() {
@@ -112,5 +131,6 @@ class ScanService : Service() {
         const val ACTION_STOP = "com.example.beaconscanner.STOP"
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "beacon_scan"
+        private const val WAKELOCK_TAG = "BeaconScanner:ScanLoop"
     }
 }

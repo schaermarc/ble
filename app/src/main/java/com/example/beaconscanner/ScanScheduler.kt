@@ -26,6 +26,7 @@ class ScanScheduler(
     private val scope: CoroutineScope,
     private val scanner: BeaconScanner,
     private val uploader: BeaconUploader,
+    private val locationTracker: LocationTracker,
     private val paramsProvider: () -> Params,
 ) {
     data class Params(
@@ -61,6 +62,7 @@ class ScanScheduler(
                 }
             } finally {
                 scanner.stop()
+                locationTracker.stop()
                 uploader.setRunning(false)
                 _running.value = false
                 onComplete?.invoke()
@@ -76,9 +78,13 @@ class ScanScheduler(
         // Fresh beacon set per window — the upload at the end of the
         // window reflects only beacons heard during this burst.
         scanner.clear()
+        locationTracker.start()
         scanner.start()
         delay(window)
         scanner.stop()
+        // Stop GPS/network updates right after the window; the tracker's
+        // StateFlow keeps the last fix, so the upload below still sees it.
+        locationTracker.stop()
 
         uploader.setRunning(p.uploadEnabled)
         if (p.uploadEnabled && p.target != null) {
@@ -96,6 +102,7 @@ class ScanScheduler(
         job?.cancel()
         job = null
         scanner.stop()
+        locationTracker.stop()
         uploader.setRunning(false)
         _running.value = false
     }
