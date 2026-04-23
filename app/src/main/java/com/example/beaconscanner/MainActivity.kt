@@ -30,6 +30,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -219,6 +221,35 @@ private fun BeaconScreen(
     var intervalSecText by remember {
         mutableStateOf(prefs.getInt(PREF_UPLOAD_INTERVAL_SECONDS, DEFAULT_UPLOAD_INTERVAL_SECONDS).toString())
     }
+    var uploadMode by remember {
+        mutableStateOf(prefs.getString(PREF_UPLOAD_MODE, MODE_HTTP) ?: MODE_HTTP)
+    }
+    var ehHost by remember { mutableStateOf(prefs.getString(PREF_EH_HOST, "").orEmpty()) }
+    var ehKeyName by remember { mutableStateOf(prefs.getString(PREF_EH_KEY_NAME, "").orEmpty()) }
+    var ehKey by remember { mutableStateOf(prefs.getString(PREF_EH_KEY, "").orEmpty()) }
+    var ehHub by remember { mutableStateOf(prefs.getString(PREF_EH_HUB, "").orEmpty()) }
+
+    fun currentTarget(): UploadTarget? = when (uploadMode) {
+        MODE_EVENT_HUB -> if (
+            ehHost.isNotBlank() && ehKeyName.isNotBlank() &&
+            ehKey.isNotBlank() && ehHub.isNotBlank()
+        ) UploadTarget.AzureEventHub(
+            host = ehHost.trim(), keyName = ehKeyName.trim(),
+            key = ehKey, hubName = ehHub.trim(),
+        ) else null
+        else -> if (
+            endpoint.startsWith("http://") || endpoint.startsWith("https://")
+        ) UploadTarget.Http(endpoint.trim()) else null
+    }
+
+    fun restartIfEnabled() {
+        if (!uploadEnabled) return
+        val target = currentTarget() ?: run { uploader.stop(); return }
+        val secs = intervalSecText.toIntOrNull()
+            ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
+            ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
+        uploader.start(target, secs * 1000L)
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -288,27 +319,53 @@ private fun BeaconScreen(
         Spacer(Modifier.height(8.dp))
 
         UploadCard(
+            mode = uploadMode,
+            onModeChange = { m ->
+                uploadMode = m
+                prefs.edit().putString(PREF_UPLOAD_MODE, m).apply()
+                restartIfEnabled()
+            },
             endpoint = endpoint,
             onEndpointChange = {
                 endpoint = it
                 prefs.edit().putString(PREF_UPLOAD_ENDPOINT, it).apply()
-                if (uploadEnabled) {
-                    val secs = intervalSecText.toIntOrNull()
-                        ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
-                        ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
-                    if (it.isBlank()) uploader.stop()
-                    else uploader.start(it, secs * 1000L)
-                }
+                restartIfEnabled()
+            },
+            ehHost = ehHost,
+            onEhHostChange = {
+                ehHost = it
+                prefs.edit().putString(PREF_EH_HOST, it).apply()
+                restartIfEnabled()
+            },
+            ehKeyName = ehKeyName,
+            onEhKeyNameChange = {
+                ehKeyName = it
+                prefs.edit().putString(PREF_EH_KEY_NAME, it).apply()
+                restartIfEnabled()
+            },
+            ehKey = ehKey,
+            onEhKeyChange = {
+                ehKey = it
+                prefs.edit().putString(PREF_EH_KEY, it).apply()
+                restartIfEnabled()
+            },
+            ehHub = ehHub,
+            onEhHubChange = {
+                ehHub = it
+                prefs.edit().putString(PREF_EH_HUB, it).apply()
+                restartIfEnabled()
             },
             enabled = uploadEnabled,
             onEnabledChange = { on ->
                 uploadEnabled = on
                 prefs.edit().putBoolean(PREF_UPLOAD_ENABLED, on).apply()
-                if (on && endpoint.isNotBlank()) {
+                if (on) {
+                    val target = currentTarget()
                     val secs = intervalSecText.toIntOrNull()
                         ?.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS)
                         ?: DEFAULT_UPLOAD_INTERVAL_SECONDS
-                    uploader.start(endpoint, secs * 1000L)
+                    if (target != null) uploader.start(target, secs * 1000L)
+                    else uploader.stop()
                 } else uploader.stop()
             },
             intervalSecText = intervalSecText,
@@ -318,11 +375,10 @@ private fun BeaconScreen(
                 val secs = clean.toIntOrNull()
                 if (secs != null && secs >= MIN_UPLOAD_INTERVAL_SECONDS) {
                     prefs.edit().putInt(PREF_UPLOAD_INTERVAL_SECONDS, secs).apply()
-                    if (uploadEnabled && endpoint.isNotBlank()) {
-                        uploader.start(endpoint, secs * 1000L)
-                    }
+                    restartIfEnabled()
                 }
             },
+            targetReady = currentTarget() != null,
             uploader = uploader,
         )
         Spacer(Modifier.height(8.dp))
@@ -457,22 +513,33 @@ private fun shortUuid(u: String): String {
 
 @Composable
 private fun UploadCard(
+    mode: String,
+    onModeChange: (String) -> Unit,
     endpoint: String,
     onEndpointChange: (String) -> Unit,
+    ehHost: String,
+    onEhHostChange: (String) -> Unit,
+    ehKeyName: String,
+    onEhKeyNameChange: (String) -> Unit,
+    ehKey: String,
+    onEhKeyChange: (String) -> Unit,
+    ehHub: String,
+    onEhHubChange: (String) -> Unit,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     intervalSecText: String,
     onIntervalChange: (String) -> Unit,
+    targetReady: Boolean,
     uploader: BeaconUploader,
 ) {
     val status by uploader.status.collectAsStateWithLifecycle()
-    val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
     val intervalSec = intervalSecText.toIntOrNull()
     val intervalValid = intervalSec != null && intervalSec >= MIN_UPLOAD_INTERVAL_SECONDS
 
     var expanded by rememberSaveable { mutableStateOf(false) }
+    val modeLabel = if (mode == MODE_EVENT_HUB) "Azure Event Hub" else "HTTP"
     val summary = buildString {
-        append("HTTP-Upload: ")
+        append("Upload ($modeLabel): ")
         append(if (status.running) "AN" else "AUS")
         if (intervalValid) append(" • ${intervalSec}s")
     }
@@ -498,15 +565,72 @@ private fun UploadCard(
             }
             if (expanded) {
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = endpoint,
-                    onValueChange = onEndpointChange,
-                    label = { Text("Endpoint-URL (POST JSON)") },
-                    placeholder = { Text("https://example.com/beacons") },
-                    singleLine = true,
-                    isError = endpoint.isNotBlank() && !endpointValid,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ModeChoice(
+                        label = "HTTP",
+                        selected = mode == MODE_HTTP,
+                        onSelect = { onModeChange(MODE_HTTP) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    ModeChoice(
+                        label = "Azure Event Hub",
+                        selected = mode == MODE_EVENT_HUB,
+                        onSelect = { onModeChange(MODE_EVENT_HUB) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
+                if (mode == MODE_EVENT_HUB) {
+                    OutlinedTextField(
+                        value = ehHost,
+                        onValueChange = onEhHostChange,
+                        label = { Text("Hostname") },
+                        placeholder = { Text("mynamespace.servicebus.windows.net") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = ehHub,
+                        onValueChange = onEhHubChange,
+                        label = { Text("Uplink Topic (Event Hub Name)") },
+                        placeholder = { Text("beacons") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = ehKeyName,
+                        onValueChange = onEhKeyNameChange,
+                        label = { Text("Shared Access Key Name") },
+                        placeholder = { Text("RootManageSharedAccessKey") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = ehKey,
+                        onValueChange = onEhKeyChange,
+                        label = { Text("Shared Access Key") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    val endpointValid = endpoint.startsWith("http://") || endpoint.startsWith("https://")
+                    OutlinedTextField(
+                        value = endpoint,
+                        onValueChange = onEndpointChange,
+                        label = { Text("Endpoint-URL (POST JSON)") },
+                        placeholder = { Text("https://example.com/beacons") },
+                        singleLine = true,
+                        isError = endpoint.isNotBlank() && !endpointValid,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = intervalSecText,
@@ -521,7 +645,7 @@ private fun UploadCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(
                         checked = enabled,
-                        enabled = endpointValid && intervalValid,
+                        enabled = targetReady && intervalValid,
                         onCheckedChange = onEnabledChange,
                     )
                     Text(
@@ -543,5 +667,21 @@ private fun UploadCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModeChoice(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier.clickable { onSelect() }.padding(vertical = 4.dp),
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }

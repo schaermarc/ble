@@ -13,6 +13,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 data class UploadStatus(
     val running: Boolean = false,
@@ -31,12 +35,12 @@ class BeaconUploader(
 
     private var job: Job? = null
 
-    fun start(endpoint: String, intervalMillis: Long = 30_000L) {
+    fun start(target: UploadTarget, intervalMillis: Long = 30_000L) {
         stop()
         _status.value = _status.value.copy(running = true)
         job = scope.launch(Dispatchers.IO) {
             while (isActive) {
-                uploadOnce(endpoint)
+                uploadOnce(target)
                 delay(intervalMillis)
             }
         }
@@ -48,12 +52,15 @@ class BeaconUploader(
         _status.value = _status.value.copy(running = false)
     }
 
-    private fun uploadOnce(endpoint: String) {
+    private fun uploadOnce(target: UploadTarget) {
         val beacons = getBeacons()
         val body = buildJson(beacons)
         val now = System.currentTimeMillis()
         val next = try {
-            val code = post(endpoint, body)
+            val code = when (target) {
+                is UploadTarget.Http -> postHttp(target.url, body)
+                is UploadTarget.AzureEventHub -> postEventHub(target, body)
+            }
             UploadStatus(
                 running = true,
                 lastAttemptMillis = now,
@@ -93,8 +100,8 @@ class BeaconUploader(
             .toString()
     }
 
-    private fun post(endpoint: String, body: String): Int {
-        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+    private fun postHttp(url: String, body: String): Int {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "application/json")
@@ -108,5 +115,49 @@ class BeaconUploader(
         } finally {
             conn.disconnect()
         }
+    }
+
+    private fun postEventHub(cfg: UploadTarget.AzureEventHub, body: String): Int {
+        val host = cfg.host.removePrefix("https://").removePrefix("http://").trimEnd('/')
+        val hub = cfg.hubName.trim().trim('/')
+        val resourceUri = "https://$host/$hub"
+        val expiry = System.currentTimeMillis() / 1000 + 3600
+        val token = sasToken(resourceUri, cfg.keyName, cfg.key, expiry)
+
+        val url = URL("$resourceUri/messages?api-version=2014-01")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json;charset=utf-8")
+            setRequestProperty("Authorization", token)
+            setRequestProperty("Host", host)
+            doOutput = true
+            connectTimeout = 10_000
+            readTimeout = 10_000
+        }
+        return try {
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            conn.responseCode
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * Azure Service Bus / Event Hubs Shared Access Signature:
+     * SharedAccessSignature sr=<encoded resource uri>&sig=<encoded sig>&se=<expiry epoch secs>&skn=<key name>
+     *
+     * Signature = HMAC-SHA256(key, URLEncode(resourceUri) + "\n" + expiry)   (base64)
+     */
+    private fun sasToken(resourceUri: String, keyName: String, key: String, expiryEpochSec: Long): String {
+        val encodedUri = URLEncoder.encode(resourceUri, "UTF-8")
+        val stringToSign = "$encodedUri\n$expiryEpochSec"
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+        val raw = mac.doFinal(stringToSign.toByteArray(Charsets.UTF_8))
+        val sig = Base64.getEncoder().encodeToString(raw)
+        return "SharedAccessSignature sr=$encodedUri" +
+            "&sig=${URLEncoder.encode(sig, "UTF-8")}" +
+            "&se=$expiryEpochSec" +
+            "&skn=${URLEncoder.encode(keyName, "UTF-8")}"
     }
 }

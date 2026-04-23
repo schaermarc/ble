@@ -47,11 +47,11 @@ class ScanService : Service() {
         app.scanner.start()
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val endpoint = prefs.getString(PREF_UPLOAD_ENDPOINT, "").orEmpty()
         val uploadEnabled = prefs.getBoolean(PREF_UPLOAD_ENABLED, false)
         val intervalSec = prefs.getInt(PREF_UPLOAD_INTERVAL_SECONDS, DEFAULT_UPLOAD_INTERVAL_SECONDS)
-        if (uploadEnabled && endpoint.isNotBlank()) {
-            app.uploader.start(endpoint, intervalSec.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS) * 1000L)
+        val target = prefs.readUploadTarget()
+        if (uploadEnabled && target != null) {
+            app.uploader.start(target, intervalSec.coerceAtLeast(MIN_UPLOAD_INTERVAL_SECONDS) * 1000L)
         }
 
         return START_STICKY
