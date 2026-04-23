@@ -1,5 +1,6 @@
 package com.example.beaconscanner
 
+import android.location.Location
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +30,7 @@ data class UploadStatus(
 class BeaconUploader(
     private val scope: CoroutineScope,
     private val getBeacons: () -> List<EddystoneUidBeacon>,
+    private val getLocation: () -> Location? = { null },
 ) {
     private val _status = MutableStateFlow(UploadStatus())
     val status: StateFlow<UploadStatus> = _status.asStateFlow()
@@ -93,11 +95,29 @@ class BeaconUploader(
                     .put("lastSeenMillis", b.lastSeenMillis)
             )
         }
-        return JSONObject()
-            .put("timestamp", System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        val root = JSONObject()
+            .put("timestamp", now)
             .put("beaconCount", beacons.size)
             .put("beacons", arr)
-            .toString()
+
+        val loc = getLocation()
+        if (loc != null) {
+            val locJson = JSONObject()
+                .put("lat", loc.latitude)
+                .put("lon", loc.longitude)
+                .put("accuracyMeters", if (loc.hasAccuracy()) loc.accuracy else JSONObject.NULL)
+                .put("altitudeMeters", if (loc.hasAltitude()) loc.altitude else JSONObject.NULL)
+                .put("speedMps", if (loc.hasSpeed()) loc.speed else JSONObject.NULL)
+                .put("bearingDeg", if (loc.hasBearing()) loc.bearing else JSONObject.NULL)
+                .put("provider", loc.provider ?: JSONObject.NULL)
+                .put("fixTimeMillis", loc.time)
+                .put("ageMillis", (now - loc.time).coerceAtLeast(0))
+            root.put("location", locJson)
+        } else {
+            root.put("location", JSONObject.NULL)
+        }
+        return root.toString()
     }
 
     private fun postHttp(url: String, body: String): Int {

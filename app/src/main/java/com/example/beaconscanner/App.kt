@@ -11,15 +11,19 @@ class App : Application() {
         private set
     lateinit var uploader: BeaconUploader
         private set
+    lateinit var locationTracker: LocationTracker
+        private set
 
     private val uploaderScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
 
     override fun onCreate() {
         super.onCreate()
         scanner = BeaconScanner(this)
+        locationTracker = LocationTracker(this)
         uploader = BeaconUploader(
             scope = uploaderScope,
             getBeacons = { scanner.devices.value.values.mapNotNull { it.eddystone } },
+            getLocation = { locationTracker.location.value },
         )
     }
 }

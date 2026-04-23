@@ -77,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
     private val scanner: BeaconScanner get() = (application as App).scanner
     private val uploader: BeaconUploader get() = (application as App).uploader
+    private val locationTracker: LocationTracker get() = (application as App).locationTracker
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
                     BeaconScreen(
                         scanner = scanner,
                         uploader = uploader,
+                        locationTracker = locationTracker,
                         prefs = prefs,
                         onStart = ::requestPermissionsAndStart,
                         onStop = ::stopScanService,
@@ -198,6 +200,7 @@ private fun Context.locationServicesEnabled(): Boolean {
 private fun BeaconScreen(
     scanner: BeaconScanner,
     uploader: BeaconUploader,
+    locationTracker: LocationTracker,
     prefs: android.content.SharedPreferences,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -265,6 +268,7 @@ private fun BeaconScreen(
     val devices by scanner.devices.collectAsStateWithLifecycle()
     val scanning by scanner.scanning.collectAsStateWithLifecycle()
     val lastError by scanner.lastError.collectAsStateWithLifecycle()
+    val location by locationTracker.location.collectAsStateWithLifecycle()
 
     val all = devices.values.toList()
     val eddystone = all.mapNotNull { it.eddystone }
@@ -289,6 +293,7 @@ private fun BeaconScreen(
             totalDevices = all.size,
             eddystoneCount = eddystone.size,
             lastError = lastError,
+            location = location,
             onOpenLocationSettings = onOpenLocationSettings,
         )
         Spacer(Modifier.height(8.dp))
@@ -412,6 +417,7 @@ private fun StatusCard(
     totalDevices: Int,
     eddystoneCount: Int,
     lastError: Int?,
+    location: android.location.Location?,
     onOpenLocationSettings: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -429,6 +435,18 @@ private fun StatusCard(
             Spacer(Modifier.height(4.dp))
             Text("BLE-Geräte: $totalDevices   •   Eddystone-UID: $eddystoneCount",
                 style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = if (location != null) {
+                    val ageSec = ((System.currentTimeMillis() - location.time) / 1000).coerceAtLeast(0)
+                    val acc = if (location.hasAccuracy()) " ±%.0fm".format(location.accuracy) else ""
+                    "Position: %.6f, %.6f%s   •   %ds alt   •   %s".format(
+                        location.latitude, location.longitude, acc, ageSec,
+                        location.provider ?: "?",
+                    )
+                } else "Position: (noch kein Fix)",
+                style = MaterialTheme.typography.bodySmall,
+            )
             if (lastError != null) {
                 Spacer(Modifier.height(4.dp))
                 Text("Scan-Fehler Code $lastError", style = MaterialTheme.typography.bodySmall)

@@ -26,6 +26,7 @@ class ScanService : Service() {
             ACTION_STOP -> {
                 app.scanner.stop()
                 app.uploader.stop()
+                app.locationTracker.stop()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
@@ -38,13 +39,15 @@ class ScanService : Service() {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
 
         app.scanner.start()
+        app.locationTracker.start()
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val uploadEnabled = prefs.getBoolean(PREF_UPLOAD_ENABLED, false)
@@ -60,6 +63,7 @@ class ScanService : Service() {
     override fun onDestroy() {
         app.scanner.stop()
         app.uploader.stop()
+        app.locationTracker.stop()
         super.onDestroy()
     }
 
