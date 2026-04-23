@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +39,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -328,7 +330,7 @@ private fun BeaconScreen(
         if (showAll) {
             Text("${all.size} BLE-Geräte", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
-            LazyColumn {
+            LazyColumn(modifier = Modifier.weight(1f)) {
                 items(all.sortedByDescending { it.rssi }, key = { it.address }) { DeviceCard(it) }
             }
         } else {
@@ -337,7 +339,7 @@ private fun BeaconScreen(
                 (if (normalized.isNotEmpty()) " (gefiltert aus ${eddystone.size})" else "")
             Text(caption, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
-            LazyColumn {
+            LazyColumn(modifier = Modifier.weight(1f)) {
                 items(visibleEddystone.sortedByDescending { it.rssi }, key = { it.deviceAddress }) {
                     BeaconCard(it)
                 }
@@ -468,56 +470,77 @@ private fun UploadCard(
     val intervalSec = intervalSecText.toIntOrNull()
     val intervalValid = intervalSec != null && intervalSec >= MIN_UPLOAD_INTERVAL_SECONDS
 
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val summary = buildString {
+        append("HTTP-Upload: ")
+        append(if (status.running) "AN" else "AUS")
+        if (intervalValid) append(" • ${intervalSec}s")
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                "HTTP-Upload",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = endpoint,
-                onValueChange = onEndpointChange,
-                label = { Text("Endpoint-URL (POST JSON)") },
-                placeholder = { Text("https://example.com/beacons") },
-                singleLine = true,
-                isError = endpoint.isNotBlank() && !endpointValid,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = intervalSecText,
-                onValueChange = onIntervalChange,
-                label = { Text("Intervall (Sekunden, min. $MIN_UPLOAD_INTERVAL_SECONDS)") },
-                singleLine = true,
-                isError = !intervalValid,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = enabled,
-                    enabled = endpointValid && intervalValid,
-                    onCheckedChange = onEnabledChange,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
                 )
                 Text(
-                    "  " + if (status.running) "Upload AN (läuft)" else "Upload AUS",
-                    style = MaterialTheme.typography.bodyMedium,
+                    if (expanded) "▲" else "▼",
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
-            val ts = status.lastAttemptMillis
-            if (ts != null) {
-                Spacer(Modifier.height(4.dp))
-                val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
-                val tag = if (status.lastSuccess == true) "OK" else "FEHLER"
-                Text(
-                    "Letzter Versuch $time: $tag" +
-                        (status.lastMessage?.let { " — $it" } ?: "") +
-                        (status.lastBeaconCount?.let { " (${it} Beacons)" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = endpoint,
+                    onValueChange = onEndpointChange,
+                    label = { Text("Endpoint-URL (POST JSON)") },
+                    placeholder = { Text("https://example.com/beacons") },
+                    singleLine = true,
+                    isError = endpoint.isNotBlank() && !endpointValid,
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = intervalSecText,
+                    onValueChange = onIntervalChange,
+                    label = { Text("Intervall (Sekunden, min. $MIN_UPLOAD_INTERVAL_SECONDS)") },
+                    singleLine = true,
+                    isError = !intervalValid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = enabled,
+                        enabled = endpointValid && intervalValid,
+                        onCheckedChange = onEnabledChange,
+                    )
+                    Text(
+                        "  " + if (status.running) "Upload AN (läuft)" else "Upload AUS",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                val ts = status.lastAttemptMillis
+                if (ts != null) {
+                    Spacer(Modifier.height(4.dp))
+                    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
+                    val tag = if (status.lastSuccess == true) "OK" else "FEHLER"
+                    Text(
+                        "Letzter Versuch $time: $tag" +
+                            (status.lastMessage?.let { " — $it" } ?: "") +
+                            (status.lastBeaconCount?.let { " (${it} Beacons)" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
