@@ -15,7 +15,10 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
 import java.util.Base64
+import java.util.Date
+import java.util.Locale
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -83,41 +86,56 @@ class BeaconUploader(
     }
 
     private fun buildJson(beacons: List<EddystoneUidBeacon>): String {
-        val arr = JSONArray()
+        val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
+
+        val beaconArr = JSONArray()
         for (b in beacons) {
-            arr.put(
+            // beaconId = last 2 bytes (= last 4 hex chars) of the 6-byte instance id.
+            val beaconId = b.instanceId.takeLast(4)
+            beaconArr.put(
                 JSONObject()
-                    .put("namespace", b.namespace)
-                    .put("instanceId", b.instanceId)
-                    .put("txPower", b.txPower)
+                    .put("beaconId", beaconId)
                     .put("rssi", b.rssi)
-                    .put("deviceAddress", b.deviceAddress)
-                    .put("lastSeenMillis", b.lastSeenMillis)
             )
         }
-        val now = System.currentTimeMillis()
-        val root = JSONObject()
-            .put("timestamp", now)
-            .put("beaconCount", beacons.size)
-            .put("beacons", arr)
 
-        val loc = getLocation()
-        if (loc != null) {
-            val locJson = JSONObject()
-                .put("lat", loc.latitude)
-                .put("lon", loc.longitude)
-                .put("accuracyMeters", if (loc.hasAccuracy()) loc.accuracy else JSONObject.NULL)
-                .put("altitudeMeters", if (loc.hasAltitude()) loc.altitude else JSONObject.NULL)
-                .put("speedMps", if (loc.hasSpeed()) loc.speed else JSONObject.NULL)
-                .put("bearingDeg", if (loc.hasBearing()) loc.bearing else JSONObject.NULL)
-                .put("provider", loc.provider ?: JSONObject.NULL)
-                .put("fixTimeMillis", loc.time)
-                .put("ageMillis", (now - loc.time).coerceAtLeast(0))
-            root.put("location", locJson)
-        } else {
-            root.put("location", JSONObject.NULL)
-        }
-        return root.toString()
+        val dataScanCollection = JSONObject()
+            .put("scanType", "BLE_BEACONS")
+            .put("again", false)
+            .put("dataFormat", "BEACON_ID")
+            .put("fragmentIdentification", 0)
+            .put("collectionIdentifier", 230)
+            .put("hash", 128)
+            .put("beaconIdData", beaconArr)
+
+        val payload = JSONObject()
+            .put("messageType", "DATA_SCAN_COLLECTION")
+            .put("trackingMode", "PERMANENT_TRACKING")
+            .put("batteryLevel", 92)
+            .put("batteryStatus", "OPERATING")
+            .put("ackToken", 1)
+            .put("periodicPosition", false)
+            .put("temperatureMeasure", 25.3)
+            .put("sosFlag", 0)
+            .put("appState", 1)
+            .put("dynamicMotionState", "STATIC")
+            .put("onDemand", false)
+            .put("payload", "0b485c891000e680a903ba4a")
+            .put("deviceConfiguration", JSONObject().put("mode", "PERMANENT_TRACKING"))
+            .put("dataScanCollection", dataScanCollection)
+
+        val points = JSONObject()
+            .put("batteryLevel", JSONObject().put("unitId", "%").put("record", 92))
+            .put("temperature", JSONObject().put("unitId", "Cel").put("record", 25.3))
+
+        val uplink = JSONObject()
+            .put("Time", time)
+            .put("DevEUI", "20635F0181001445")
+            .put("payload_hex", "0b485c891000e680a903ba4a")
+            .put("payload", payload)
+            .put("points", points)
+
+        return JSONObject().put("DevEUI_uplink", uplink).toString()
     }
 
     private fun postHttp(url: String, body: String): Int {
