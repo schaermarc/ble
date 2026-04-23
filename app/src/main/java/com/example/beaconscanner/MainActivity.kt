@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
     private val scanner: BeaconScanner get() = (application as App).scanner
     private val uploader: BeaconUploader get() = (application as App).uploader
     private val locationTracker: LocationTracker get() = (application as App).locationTracker
+    private val scheduler: ScanScheduler get() = (application as App).scheduler
 
     private var pendingAutoStart = false
 
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
                         scanner = scanner,
                         uploader = uploader,
                         locationTracker = locationTracker,
+                        scheduler = scheduler,
                         prefs = prefs,
                         onStart = ::requestPermissionsAndStart,
                         onStop = ::stopScanService,
@@ -226,6 +228,7 @@ private fun BeaconScreen(
     scanner: BeaconScanner,
     uploader: BeaconUploader,
     locationTracker: LocationTracker,
+    scheduler: ScanScheduler,
     prefs: android.content.SharedPreferences,
     onStart: () -> Unit,
     onStop: () -> Unit,
@@ -275,7 +278,8 @@ private fun BeaconScreen(
     }
 
     val devices by scanner.devices.collectAsStateWithLifecycle()
-    val scanning by scanner.scanning.collectAsStateWithLifecycle()
+    val scannerScanning by scanner.scanning.collectAsStateWithLifecycle()
+    val schedulerRunning by scheduler.running.collectAsStateWithLifecycle()
     val lastError by scanner.lastError.collectAsStateWithLifecycle()
     val location by locationTracker.location.collectAsStateWithLifecycle()
 
@@ -299,7 +303,8 @@ private fun BeaconScreen(
         StatusCard(
             permsOk = permsOk,
             locationOk = locationOk,
-            scanning = scanning,
+            schedulerRunning = schedulerRunning,
+            scannerScanning = scannerScanning,
             totalDevices = all.size,
             eddystoneCount = eddystone.size,
             lastError = lastError,
@@ -322,8 +327,11 @@ private fun BeaconScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (scanning) Button(onClick = onStop, modifier = Modifier.weight(1f)) { Text("Stop") }
-            else Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Scan") }
+            if (schedulerRunning) {
+                Button(onClick = onStop, modifier = Modifier.weight(1f)) { Text("Stop") }
+            } else {
+                Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Scan") }
+            }
             Button(onClick = onClear, modifier = Modifier.weight(1f)) { Text("Clear") }
         }
         Spacer(Modifier.height(4.dp))
@@ -338,6 +346,10 @@ private fun BeaconScreen(
             onPeriodicChange = { on ->
                 scanPeriodic = on
                 prefs.edit().putBoolean(PREF_SCAN_PERIODIC, on).apply()
+                // Apply immediately: toggling off cancels any running loop;
+                // toggling on (re)starts the service so the scheduler picks
+                // up periodic mode from prefs.
+                if (on) onStart() else onStop()
             },
             periodSecText = periodSecText,
             onPeriodChange = { raw ->
@@ -419,7 +431,8 @@ private fun BeaconScreen(
 private fun StatusCard(
     permsOk: Boolean,
     locationOk: Boolean,
-    scanning: Boolean,
+    schedulerRunning: Boolean,
+    scannerScanning: Boolean,
     totalDevices: Int,
     eddystoneCount: Int,
     lastError: Int?,
@@ -432,8 +445,9 @@ private fun StatusCard(
                 "Status: " + when {
                     !permsOk -> "Permission fehlt"
                     !locationOk -> "Standortdienst AUS"
-                    !scanning -> "gestoppt"
-                    else -> "scanning…"
+                    scannerScanning -> "scanning…"
+                    schedulerRunning -> "idle (wartet auf nächstes Fenster)"
+                    else -> "gestoppt"
                 },
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,

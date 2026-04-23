@@ -49,7 +49,17 @@ class ScanService : Service() {
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val periodic = prefs.getBoolean(PREF_SCAN_PERIODIC, DEFAULT_SCAN_PERIODIC)
-        if (periodic) app.scheduler.startPeriodic() else app.scheduler.runOnce()
+        if (periodic) {
+            app.scheduler.startPeriodic()
+        } else {
+            app.scheduler.runOnce(onComplete = {
+                // Single-shot is done — drop the foreground notification and
+                // let the system tear us down. Location tracker is stopped in
+                // onDestroy.
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            })
+        }
 
         return START_STICKY
     }

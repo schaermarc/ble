@@ -41,14 +41,14 @@ class ScanScheduler(
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
     fun startPeriodic() {
-        launchLoop(periodic = true)
+        launchLoop(periodic = true, onComplete = null)
     }
 
-    fun runOnce() {
-        launchLoop(periodic = false)
+    fun runOnce(onComplete: (() -> Unit)? = null) {
+        launchLoop(periodic = false, onComplete = onComplete)
     }
 
-    private fun launchLoop(periodic: Boolean) {
+    private fun launchLoop(periodic: Boolean, onComplete: (() -> Unit)?) {
         stop()
         _running.value = true
         uploader.setRunning(paramsProvider().uploadEnabled)
@@ -63,6 +63,7 @@ class ScanScheduler(
                 scanner.stop()
                 uploader.setRunning(false)
                 _running.value = false
+                onComplete?.invoke()
             }
         }
     }
