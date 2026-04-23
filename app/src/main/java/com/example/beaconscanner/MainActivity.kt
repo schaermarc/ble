@@ -710,56 +710,78 @@ private fun ScanScheduleCard(
         windowSec >= MIN_SCAN_WINDOW_SECONDS &&
         (periodSec == null || windowSec <= periodSec)
 
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val summary = buildString {
+        append("Scan: ")
+        append(if (periodic) "periodisch" else "manuell")
+        if (windowSec != null) append(" • Dauer ${windowSec}s")
+        if (periodic && periodSec != null) append(" • alle ${periodSec}s")
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                "Scan-Zeitplan",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = periodic, onCheckedChange = onPeriodicChange)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    "  Periodischer Scan",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = periodSecText,
-                    onValueChange = onPeriodChange,
-                    label = { Text("Intervall (s)") },
-                    singleLine = true,
-                    enabled = periodic,
-                    isError = periodic && !periodValid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    summary,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedTextField(
-                    value = windowSecText,
-                    onValueChange = onWindowChange,
-                    label = { Text("Scan-Dauer (s)") },
-                    singleLine = true,
-                    isError = !windowValid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
+                Text(
+                    if (expanded) "▲" else "▼",
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (periodic) {
-                    "Alle ${periodSec ?: "?"}s für ${windowSec ?: "?"}s scannen, " +
-                        "danach Upload mit den in diesem Fenster erfassten Beacons. " +
-                        "Dazwischen ist das Scannen aus."
-                } else {
-                    "Kein automatischer Scan. Der Scan-Button startet einen einmaligen " +
-                        "Scan über ${windowSec ?: "?"}s; am Ende werden alle in dieser " +
-                        "Zeit gesehenen Beacons gesendet."
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = periodic, onCheckedChange = onPeriodicChange)
+                    Text(
+                        "  Periodischer Scan",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = periodSecText,
+                        onValueChange = onPeriodChange,
+                        label = { Text("Intervall (s)") },
+                        singleLine = true,
+                        enabled = periodic,
+                        isError = periodic && !periodValid,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = windowSecText,
+                        onValueChange = onWindowChange,
+                        label = { Text("Scan-Dauer (s)") },
+                        singleLine = true,
+                        isError = !windowValid,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (periodic) {
+                        "Alle ${periodSec ?: "?"}s für ${windowSec ?: "?"}s scannen, " +
+                            "danach Upload mit den in diesem Fenster erfassten Beacons. " +
+                            "Dazwischen ist das Scannen aus."
+                    } else {
+                        "Kein automatischer Scan. Der Scan-Button startet einen einmaligen " +
+                            "Scan über ${windowSec ?: "?"}s; am Ende werden alle in dieser " +
+                            "Zeit gesehenen Beacons gesendet."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
