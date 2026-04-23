@@ -15,6 +15,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -216,7 +218,7 @@ private fun BeaconScreen(
     var locationOk by remember { mutableStateOf(context.locationServicesEnabled()) }
 
     var endpoint by remember {
-        mutableStateOf(prefs.getString(PREF_UPLOAD_ENDPOINT, "").orEmpty())
+        mutableStateOf(prefs.getString(PREF_UPLOAD_ENDPOINT, DEFAULT_HTTP_ENDPOINT).orEmpty())
     }
     var uploadEnabled by remember {
         mutableStateOf(prefs.getBoolean(PREF_UPLOAD_ENABLED, false))
@@ -227,10 +229,10 @@ private fun BeaconScreen(
     var uploadMode by remember {
         mutableStateOf(prefs.getString(PREF_UPLOAD_MODE, MODE_HTTP) ?: MODE_HTTP)
     }
-    var ehHost by remember { mutableStateOf(prefs.getString(PREF_EH_HOST, "").orEmpty()) }
-    var ehKeyName by remember { mutableStateOf(prefs.getString(PREF_EH_KEY_NAME, "").orEmpty()) }
-    var ehKey by remember { mutableStateOf(prefs.getString(PREF_EH_KEY, "").orEmpty()) }
-    var ehHub by remember { mutableStateOf(prefs.getString(PREF_EH_HUB, "").orEmpty()) }
+    var ehHost by remember { mutableStateOf(prefs.getString(PREF_EH_HOST, DEFAULT_EH_HOST).orEmpty()) }
+    var ehKeyName by remember { mutableStateOf(prefs.getString(PREF_EH_KEY_NAME, DEFAULT_EH_KEY_NAME).orEmpty()) }
+    var ehKey by remember { mutableStateOf(prefs.getString(PREF_EH_KEY, DEFAULT_EH_KEY).orEmpty()) }
+    var ehHub by remember { mutableStateOf(prefs.getString(PREF_EH_HUB, DEFAULT_EH_HUB).orEmpty()) }
 
     fun currentTarget(): UploadTarget? = when (uploadMode) {
         MODE_EVENT_HUB -> if (
@@ -281,6 +283,7 @@ private fun BeaconScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
         AppHeader()
@@ -391,20 +394,14 @@ private fun BeaconScreen(
         if (showAll) {
             Text("${all.size} BLE-Geräte", style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(all.sortedByDescending { it.rssi }, key = { it.address }) { DeviceCard(it) }
-            }
+            all.sortedByDescending { it.rssi }.forEach { DeviceCard(it) }
         } else {
             val count = visibleEddystone.size
             val caption = "$count Eddystone-UID" +
                 (if (normalized.isNotEmpty()) " (gefiltert aus ${eddystone.size})" else "")
             Text(caption, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(4.dp))
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(visibleEddystone.sortedByDescending { it.rssi }, key = { it.deviceAddress }) {
-                    BeaconCard(it)
-                }
-            }
+            visibleEddystone.sortedByDescending { it.rssi }.forEach { BeaconCard(it) }
         }
     }
 }

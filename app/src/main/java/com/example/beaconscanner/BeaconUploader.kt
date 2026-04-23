@@ -156,7 +156,11 @@ class BeaconUploader(
     }
 
     private fun postEventHub(cfg: UploadTarget.AzureEventHub, body: String): Int {
-        val host = cfg.host.removePrefix("https://").removePrefix("http://").trimEnd('/')
+        // The Event Hubs REST API only serves HTTPS on 443. Users often paste a
+        // hostname copied from a Kafka/AMQP connection string that carries
+        // :9093 or :5671 — strip any explicit port so we stay on 443.
+        val host = cfg.host.removePrefix("https://").removePrefix("http://")
+            .trimEnd('/').substringBefore(':')
         val hub = cfg.hubName.trim().trim('/')
         val resourceUri = "https://$host/$hub"
         val expiry = System.currentTimeMillis() / 1000 + 3600
