@@ -130,7 +130,7 @@ class BeaconUploader(
 
         val uplink = JSONObject()
             .put("Time", time)
-            .put("DevEUI", "20635F0181001445")
+            .put("DevEUI", "20635F05B100045D")
             .put("payload_hex", "0b485c891000e680a903ba4a")
             .put("payload", payload)
             .put("points", points)
