@@ -39,37 +39,36 @@ class BeaconUploader(
 
     suspend fun uploadOnce(target: UploadTarget) = withContext(Dispatchers.IO) {
         val beacons = getBeacons()
-        val body = buildJson(beacons)
+        val bodies = listOf(
+            buildScanCollectionJson(beacons),
+            buildPositionJson(),
+        )
         val now = System.currentTimeMillis()
-        val next = try {
-            val code = when (target) {
-                is UploadTarget.Http -> postHttp(target.url, body)
-                is UploadTarget.AzureEventHub -> postEventHub(target, body)
+        val results = bodies.map { body ->
+            runCatching {
+                when (target) {
+                    is UploadTarget.Http -> postHttp(target.url, body)
+                    is UploadTarget.AzureEventHub -> postEventHub(target, body)
+                }
             }
-            _status.value.copy(
-                lastAttemptMillis = now,
-                lastSuccess = code in 200..299,
-                lastMessage = "HTTP $code",
-                lastBeaconCount = beacons.size,
-            )
-        } catch (e: Exception) {
-            _status.value.copy(
-                lastAttemptMillis = now,
-                lastSuccess = false,
-                lastMessage = e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""),
-                lastBeaconCount = beacons.size,
-            )
         }
-        _status.value = next
+        val allOk = results.all { r -> r.getOrNull()?.let { it in 200..299 } == true }
+        val msg = results.mapIndexed { i, r ->
+            val tag = if (i == 0) "scan" else "pos"
+            r.fold(
+                { "$tag HTTP $it" },
+                { "$tag ${it.javaClass.simpleName}" },
+            )
+        }.joinToString(", ")
+        _status.value = _status.value.copy(
+            lastAttemptMillis = now,
+            lastSuccess = allOk,
+            lastMessage = msg,
+            lastBeaconCount = beacons.size,
+        )
     }
 
-    private fun buildJson(beacons: List<EddystoneUidBeacon>): String {
-        val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
-
-        val loc = getLocation()
-        val lrrLat = if (loc != null) String.format(Locale.US, "%.6f", loc.latitude) else "0.000000"
-        val lrrLon = if (loc != null) String.format(Locale.US, "%.6f", loc.longitude) else "0.000000"
-
+    private fun buildScanCollectionJson(beacons: List<EddystoneUidBeacon>): String {
         val beaconArr = JSONArray()
         for (b in beacons) {
             val beaconId = b.instanceId.takeLast(4)
@@ -108,6 +107,60 @@ class BeaconUploader(
         val points = JSONObject()
             .put("batteryLevel", JSONObject().put("unitId", "%").put("record", 92))
             .put("temperature", JSONObject().put("unitId", "Cel").put("record", 25.3))
+
+        return buildEnvelope(payload, points)
+    }
+
+    private fun buildPositionJson(): String {
+        val loc = getLocation()
+        val lat = loc?.latitude ?: 0.0
+        val lon = loc?.longitude ?: 0.0
+        val accuracy = if (loc?.hasAccuracy() == true) loc.accuracy.toDouble() else 0.0
+        val ageSec = if (loc != null)
+            ((System.currentTimeMillis() - loc.time) / 1000L).coerceAtLeast(0)
+        else 0L
+
+        val payload = JSONObject()
+            .put("gpsLatitude", lat)
+            .put("gpsLongitude", lon)
+            .put("horizontalAccuracy", accuracy)
+            .put("messageType", "POSITION_MESSAGE")
+            .put("age", ageSec)
+            .put("trackingMode", "MOTION_TRACKING")
+            .put("batteryLevel", 92)
+            .put("batteryStatus", "OPERATING")
+            .put("ackToken", 1)
+            .put("rawPositionType", "GPS")
+            .put("periodicPosition", false)
+            .put("temperatureMeasure", 36.4)
+            .put("sosFlag", 0)
+            .put("appState", 1)
+            .put("dynamicMotionState", "STATIC")
+            .put("onDemand", false)
+            .put("payload", "03285c9f10051b97e904b2b505088f5d")
+            .put("deviceConfiguration", JSONObject().put("mode", "MOTION_TRACKING"))
+
+        val points = JSONObject()
+            .put("batteryLevel", JSONObject().put("unitId", "%").put("record", 92))
+            .put("temperature", JSONObject().put("unitId", "Cel").put("record", 36.4))
+            .put(
+                "location",
+                JSONObject()
+                    .put("unitId", "GPS")
+                    .put("record", JSONArray().put(lon).put(lat)),
+            )
+            .put("accuracy", JSONObject().put("unitId", "m").put("record", accuracy))
+            .put("age", JSONObject().put("unitId", "s").put("record", ageSec))
+
+        return buildEnvelope(payload, points)
+    }
+
+    private fun buildEnvelope(payload: JSONObject, points: JSONObject): String {
+        val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
+
+        val loc = getLocation()
+        val lrrLat = if (loc != null) String.format(Locale.US, "%.6f", loc.latitude) else "0.000000"
+        val lrrLon = if (loc != null) String.format(Locale.US, "%.6f", loc.longitude) else "0.000000"
 
         val lrrs = JSONObject().put(
             "Lrr",
