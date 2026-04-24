@@ -167,6 +167,8 @@ class BeaconUploader(
             .put("Late", "0")
             .put("LrrLAT", lrrLat)
             .put("LrrLON", lrrLon)
+            .put("DevLAT", lrrLat)
+            .put("DevLON", lrrLon)
             .put("Lrrs", lrrs)
             .put("DevLrrCnt", "1")
             .put("CustomerID", "100055680")
